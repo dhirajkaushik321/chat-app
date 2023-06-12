@@ -1,103 +1,102 @@
-socket = io()
+var socket = io();
 
-// Elements
-$messageForm = document.querySelector('form')
-$messageFormInput = $messageForm.querySelector('input')
-$messageFormButton = $messageForm.querySelector('button')
-$sendLocationButton = document.querySelector('#send-location')
-$messages = document.querySelector('#messages')
-//Templates
-const messageTemplate = document.querySelector('#message-template').innerHTML
-const locationTemplate = document.querySelector('#location-template').innerHTML
-const sidebarTemplate=document.querySelector('#sidebar-template').innerHTML
-//Options
-const {username,room}=Qs.parse(location.search,{ignoreQueryPrefix:true})
+function scrollToBottom () {
+  // Selectors
+  var messages = jQuery('#messages');
+  var newMessage = messages.children('li:last-child')
+  // Heights
+  var clientHeight = messages.prop('clientHeight');
+  var scrollTop = messages.prop('scrollTop');
+  var scrollHeight = messages.prop('scrollHeight');
+  var newMessageHeight = newMessage.innerHeight();
+  var lastMessageHeight = newMessage.prev().innerHeight();
 
-const autoScroll=()=>{
-    // New message element
-    const $newMessage=$messages.lastElementChild
-
-    // Height of new message
-    const newMessageStyle=getComputedStyle($newMessage)
-    const newMessageMargin=parseInt(newMessageStyle.marginBottom)
-    const newMessageHeight=$newMessage.offsetHeight+newMessageMargin
-
-    //Visible height
-    const visibleHeight=$messages.offsetHeight
-
-    //Height of message container
-    const  containerHeight=$messages.scrollHeight
-
-    //How far i have scrolled
-    const scrollOffset=$messages.scrollTop+visibleHeight
-
-    if(containerHeight-newMessageHeight<= scrollOffset){
-        $messages.scrollTop=$messages.scrollHeight
-    }
+  if (clientHeight + scrollTop + newMessageHeight + lastMessageHeight >= scrollHeight) {
+    messages.scrollTop(scrollHeight);
+  }
 }
-// Listening for message event 
-socket.on('message', ({ message,createdAT,username }) => {
-    createdAT = moment(createdAT).format('h:mm:a')
-    const html = Mustache.render(messageTemplate, {
-        username,
-        message,
-        createdAT
-    })
-    $messages.insertAdjacentHTML('beforeend', html)
-    autoScroll()
-})
 
-// Listening for locationMessage event
-socket.on('locationMessage', ({ url, createdAT,username }) => {
-    createdAT = moment(createdAT).format('h:mm:a')
-    const html = Mustache.render(locationTemplate, {
-        username,username,
-        url,
-        createdAT
-    })
-    $messages.insertAdjacentHTML('beforeend', html)
-    autoScroll()
-})
+socket.on('connect', function () {
+  var params = jQuery.deparam(window.location.search);
 
-//Listening for roomData event
-socket.on('roomData',({room,users})=>{
-   const html=Mustache.render(sidebarTemplate,{
-       room,
-       users
-   })
-   document.querySelector('#sidebar').innerHTML=html
-})
-$messageForm.addEventListener('submit', (e) => {
-    e.preventDefault()
-    $messageFormButton.setAttribute('disabled', true)
-    const message = e.target.elements.message.value
-    socket.emit('sendMessage',message, (error) => {
-        $messageFormButton.removeAttribute('disabled')
-        $messageFormInput.value = ''
-        $messageFormInput.focus()
-        if (error) {
-            return console.log(error)
-        }
-        console.log("Message delivered!")
-    })
-})
-$sendLocationButton
-    .addEventListener('click', () => {
-        if (!navigator.geolocation) {
-            return alert("Geolocation is not supported by your browser")
-        }
-        // $sendLocationButton.setAttribute('disabled', true)
-        navigator.geolocation.getCurrentPosition((position) => {
-            const { longitude, latitude } = position.coords
-            socket.emit('sendLocation', { longitude, latitude}, (message) => {
-                $sendLocationButton.removeAttribute('disabled')
-                console.log(message)
-            })
-        })
-    })
-    socket.emit('join',{username,room},(error)=>{
-        if(error){
-            alert(error)
-            location.href='/'
-        }
-    })
+  socket.emit('join', params, function (err) {
+    if (err) {
+      alert(err);
+      window.location.href = '/';
+    } else {
+      console.log('No error');
+    }
+  });
+});
+
+socket.on('disconnect', function () {
+  console.log('Disconnected from server');
+});
+
+socket.on('updateUserList', function (users) {
+  var ol = jQuery('<ol></ol>');
+
+  users.forEach(function (user) {
+    ol.append(jQuery('<li></li>').text(user));
+  });
+
+  jQuery('#users').html(ol);
+});
+
+socket.on('newMessage', function (message) {
+  var formattedTime = moment(message.createdAt).format('h:mm a');
+  var template = jQuery('#message-template').html();
+  var html = Mustache.render(template, {
+    text: message.text,
+    from: message.from,
+    createdAt: formattedTime
+  });
+
+  jQuery('#messages').append(html);
+  scrollToBottom();
+});
+
+socket.on('newLocationMessage', function (message) {
+  var formattedTime = moment(message.createdAt).format('h:mm a');
+  var template = jQuery('#location-message-template').html();
+  var html = Mustache.render(template, {
+    from: message.from,
+    url: message.url,
+    createdAt: formattedTime
+  });
+
+  jQuery('#messages').append(html);
+  scrollToBottom();
+});
+
+jQuery('#message-form').on('submit', function (e) {
+  e.preventDefault();
+
+  var messageTextbox = jQuery('[name=message]');
+
+  socket.emit('createMessage', {
+    text: messageTextbox.val()
+  }, function () {
+    messageTextbox.val('')
+  });
+});
+
+var locationButton = jQuery('#send-location');
+locationButton.on('click', function () {
+  if (!navigator.geolocation) {
+    return alert('Geolocation not supported by your browser.');
+  }
+
+  locationButton.attr('disabled', 'disabled').text('Sending location...');
+
+  navigator.geolocation.getCurrentPosition(function (position) {
+    locationButton.removeAttr('disabled').text('Send location');
+    socket.emit('createLocationMessage', {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude
+    });
+  }, function () {
+    locationButton.removeAttr('disabled').text('Send location');
+    alert('Unable to fetch location.');
+  });
+});
